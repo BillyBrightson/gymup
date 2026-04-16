@@ -81,11 +81,21 @@ export function GymProvider({ children }) {
   const [members, setMembers] = useState(() => loadFromStorage('gymup_members', SEED_MEMBERS));
   const [payments, setPayments] = useState(() => loadFromStorage('gymup_payments', SEED_PAYMENTS));
   const [attendance, setAttendance] = useState(() => loadFromStorage('gymup_attendance', SEED_ATTENDANCE));
+  const [smsLog, setSmsLog] = useState(() => loadFromStorage('gymup_smslog', []));
   const [gymName] = useState('GymUp Fitness Centre');
 
   useEffect(() => { saveToStorage('gymup_members', members); }, [members]);
   useEffect(() => { saveToStorage('gymup_payments', payments); }, [payments]);
   useEffect(() => { saveToStorage('gymup_attendance', attendance); }, [attendance]);
+  useEffect(() => { saveToStorage('gymup_smslog', smsLog); }, [smsLog]);
+
+  const logSMS = (memberId, memberName, type, message) => {
+    setSmsLog(prev => [{
+      id: `SMS${Date.now()}`,
+      memberId, memberName, type, message,
+      sentAt: format(new Date(), "yyyy-MM-dd'T'HH:mm:ss"),
+    }, ...prev]);
+  };
 
   // Auto-update member statuses based on expiry
   useEffect(() => {
@@ -190,10 +200,10 @@ export function GymProvider({ children }) {
 
   return (
     <GymContext.Provider value={{
-      members, payments, attendance, gymName, stats,
+      members, payments, attendance, smsLog, gymName, stats,
       addMember, updateMember, deleteMember, renewMembership,
       checkIn, checkOut, getExpiringMembers, getExpiredMembers,
-      PLAN_AMOUNTS, PLAN_MONTHS,
+      logSMS, PLAN_AMOUNTS, PLAN_MONTHS,
     }}>
       {children}
     </GymContext.Provider>

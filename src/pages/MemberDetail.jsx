@@ -4,13 +4,15 @@ import { useGym } from '../context/GymContext';
 import { format, differenceInDays, parseISO } from 'date-fns';
 import {
   ArrowLeft, Phone, Mail, Calendar, RefreshCw, Trash2,
-  CalendarCheck, Banknote, Edit3, Save, X, AlertTriangle, CheckCircle
+  CalendarCheck, Banknote, Edit3, Save, X, AlertTriangle, CheckCircle, MessageSquare
 } from 'lucide-react';
+import SMSComposer from '../components/SMSComposer';
+import { templates } from '../utils/sms';
 
 export default function MemberDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { members, payments, attendance, updateMember, deleteMember, renewMembership, PLAN_AMOUNTS } = useGym();
+  const { members, payments, attendance, updateMember, deleteMember, renewMembership, logSMS, PLAN_AMOUNTS } = useGym();
   const member = members.find(m => m.id === id);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState(null);
@@ -18,6 +20,8 @@ export default function MemberDetail() {
   const [renewPlan, setRenewPlan] = useState('Monthly');
   const [renewSuccess, setRenewSuccess] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showSMS, setShowSMS] = useState(false);
+  const [smsTemplate, setSmsTemplate] = useState(null);
 
   if (!member) return (
     <div className="p-6 text-center text-gray-400">
@@ -34,7 +38,22 @@ export default function MemberDetail() {
     renewMembership(id, renewPlan);
     setRenewSuccess(true);
     setShowRenew(false);
+    // Auto-open renewal confirmation SMS
+    const updatedMember = { ...member, plan: renewPlan, expiryDate: format(new Date(new Date().setMonth(new Date().getMonth() + (renewPlan === 'Monthly' ? 1 : renewPlan === 'Quarterly' ? 3 : 12))), 'yyyy-MM-dd') };
+    setSmsTemplate(templates.renewalConfirmed(updatedMember));
+    setShowSMS(true);
     setTimeout(() => setRenewSuccess(false), 3000);
+  };
+
+  const openSMS = (type) => {
+    if (!member) return;
+    const daysLeft = differenceInDays(parseISO(member.expiryDate), new Date());
+    const msg = type === 'expiry' ? templates.expiryWarning(member)
+      : type === 'expired' ? templates.expired(member)
+      : type === 'welcome' ? templates.welcome(member)
+      : templates.renewalConfirmed(member);
+    setSmsTemplate(msg);
+    setShowSMS(true);
   };
 
   const handleDelete = () => {
@@ -62,6 +81,17 @@ export default function MemberDetail() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
+      {showSMS && member && (
+        <SMSComposer
+          member={member}
+          initialMessage={smsTemplate}
+          onClose={() => {
+            logSMS(member.id, member.name, 'manual', smsTemplate);
+            setShowSMS(false);
+          }}
+        />
+      )}
+
       <button onClick={() => navigate('/members')} className="flex items-center gap-2 text-gray-500 hover:text-gray-700 text-sm mb-6">
         <ArrowLeft size={16} /> Back to Members
       </button>
@@ -100,6 +130,7 @@ export default function MemberDetail() {
               </>
             ) : (
               <>
+                <button onClick={() => openSMS(member.status === 'expired' ? 'expired' : daysLeft <= 7 ? 'expiry' : 'welcome')} title="Send SMS/WhatsApp" className="p-2 bg-green-100 text-green-600 rounded-xl hover:bg-green-200"><MessageSquare size={16} /></button>
                 <button onClick={startEdit} className="p-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200"><Edit3 size={16} /></button>
                 <button onClick={() => setConfirmDelete(true)} className="p-2 bg-red-100 text-red-600 rounded-xl hover:bg-red-200"><Trash2 size={16} /></button>
               </>

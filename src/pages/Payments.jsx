@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useGym } from '../context/GymContext';
-import { format, parseISO } from 'date-fns';
-import { Banknote, Search, TrendingUp, RefreshCw, Plus } from 'lucide-react';
+import { format, addMonths, parseISO } from 'date-fns';
+import { Banknote, Search, TrendingUp, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import SMSComposer from '../components/SMSComposer';
+import { templates } from '../utils/sms';
 
 export default function Payments() {
-  const { payments, members, stats, renewMembership, PLAN_AMOUNTS } = useGym();
+  const { payments, members, stats, renewMembership, logSMS, PLAN_AMOUNTS } = useGym();
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [filterPlan, setFilterPlan] = useState('all');
@@ -15,6 +17,7 @@ export default function Payments() {
   const [selectedMember, setSelectedMember] = useState(null);
   const [renewPlan, setRenewPlan] = useState('Monthly');
   const [toast, setToast] = useState(null);
+  const [smsTarget, setSmsTarget] = useState(null);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
 
@@ -38,17 +41,34 @@ export default function Payments() {
     ? members.filter(m => m.name.toLowerCase().includes(renewSearch.toLowerCase()) || m.phone.includes(renewSearch))
     : [];
 
+  const PLAN_MONTHS = { Monthly: 1, Quarterly: 3, Annual: 12 };
   const handleRenew = () => {
     if (!selectedMember) return;
     renewMembership(selectedMember.id, renewPlan);
+    const newExpiry = format(addMonths(new Date(), PLAN_MONTHS[renewPlan]), 'yyyy-MM-dd');
+    const updatedMember = { ...selectedMember, plan: renewPlan, expiryDate: newExpiry };
     setShowRenewModal(false);
     setSelectedMember(null);
     setRenewSearch('');
-    showToast(`${selectedMember.name}'s membership renewed!`);
+    showToast(`${updatedMember.name}'s membership renewed!`);
+    // Auto-open SMS confirmation
+    setSmsTarget({ member: updatedMember, message: templates.renewalConfirmed(updatedMember) });
   };
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
+      {smsTarget && (
+        <SMSComposer
+          member={smsTarget.member}
+          initialMessage={smsTarget.message}
+          title="Send Renewal Confirmation"
+          subtitle="Notify member their subscription is renewed"
+          onClose={() => {
+            logSMS(smsTarget.member.id, smsTarget.member.name, 'renewal', smsTarget.message);
+            setSmsTarget(null);
+          }}
+        />
+      )}
       {toast && (
         <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-3 rounded-xl text-sm font-semibold shadow-lg">
           {toast}

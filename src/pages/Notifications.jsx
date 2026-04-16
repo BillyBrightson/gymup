@@ -1,16 +1,21 @@
 import { useState } from 'react';
 import { useGym } from '../context/GymContext';
 import { format, differenceInDays, parseISO } from 'date-fns';
-import { Bell, AlertTriangle, XCircle, Clock, RefreshCw, Phone } from 'lucide-react';
+import { Bell, AlertTriangle, Clock, RefreshCw, Phone, MessageSquare, Send } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import SMSComposer from '../components/SMSComposer';
+import { templates } from '../utils/sms';
 
 export default function Notifications() {
-  const { members, getExpiringMembers, getExpiredMembers, renewMembership } = useGym();
+  const { members, getExpiringMembers, getExpiredMembers, renewMembership, logSMS } = useGym();
   const [tab, setTab] = useState('expiring');
   const [renewModal, setRenewModal] = useState(null);
   const [renewPlan, setRenewPlan] = useState('Monthly');
   const [toast, setToast] = useState(null);
   const [days, setDays] = useState(7);
+  const [smsTarget, setSmsTarget] = useState(null);   // { member, message }
+  const [bulkSending, setBulkSending] = useState(false);
+  const [bulkIndex, setBulkIndex] = useState(0);
 
   const expiring = getExpiringMembers(days);
   const expired = getExpiredMembers();
@@ -24,6 +29,35 @@ export default function Notifications() {
     setRenewModal(null);
   };
 
+  const openSMS = (member) => {
+    const daysLeft = differenceInDays(parseISO(member.expiryDate), new Date());
+    const msg = member.status === 'expired' ? templates.expired(member) : templates.expiryWarning(member);
+    setSmsTarget({ member, message: msg });
+  };
+
+  // Bulk send — step through each member one by one
+  const startBulkSend = () => {
+    setBulkSending(true);
+    setBulkIndex(0);
+    const m = currentList[0];
+    const msg = m.status === 'expired' ? templates.expired(m) : templates.expiryWarning(m);
+    setSmsTarget({ member: m, message: msg });
+  };
+
+  const nextBulk = () => {
+    const next = bulkIndex + 1;
+    if (next >= currentList.length) {
+      setBulkSending(false);
+      setBulkIndex(0);
+      showToast(`All ${currentList.length} members notified!`);
+      return;
+    }
+    setBulkIndex(next);
+    const m = currentList[next];
+    const msg = m.status === 'expired' ? templates.expired(m) : templates.expiryWarning(m);
+    setSmsTarget({ member: m, message: msg });
+  };
+
   const tabs = [
     { key: 'expiring', label: 'Expiring Soon', count: expiring.length, color: 'text-amber-600' },
     { key: 'expired', label: 'Expired', count: expired.length, color: 'text-red-600' },
@@ -34,6 +68,22 @@ export default function Notifications() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
+      {smsTarget && (
+        <SMSComposer
+          member={smsTarget.member}
+          initialMessage={smsTarget.message}
+          title={bulkSending ? `Sending ${bulkIndex + 1} of ${currentList.length}` : 'Send Notification'}
+          subtitle={bulkSending ? 'Send then tap Next to continue' : undefined}
+          onClose={() => {
+            logSMS(smsTarget.member.id, smsTarget.member.name,
+              smsTarget.member.status === 'expired' ? 'expired' : 'expiry_warning',
+              smsTarget.message);
+            setSmsTarget(null);
+            if (bulkSending) nextBulk();
+          }}
+        />
+      )}
+
       {toast && (
         <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-3 rounded-xl text-sm font-semibold shadow-lg">
           {toast}
@@ -44,7 +94,7 @@ export default function Notifications() {
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
           <Bell size={24} className="text-orange-500" /> Notifications
         </h1>
-        <p className="text-gray-500 text-sm mt-1">Track membership expirations and take action</p>
+        <p className="text-gray-500 text-sm mt-1">Track membership expirations and send alerts</p>
       </div>
 
       {/* Summary banner */}
@@ -64,7 +114,7 @@ export default function Notifications() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-4 flex-wrap">
         {tabs.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${tab === t.key ? 'bg-orange-500 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>
@@ -73,12 +123,20 @@ export default function Notifications() {
         ))}
         {tab === 'expiring' && (
           <select value={days} onChange={e => setDays(Number(e.target.value))}
-            className="ml-auto px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none">
+            className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none">
             <option value={3}>Next 3 days</option>
             <option value={7}>Next 7 days</option>
             <option value={14}>Next 14 days</option>
             <option value={30}>Next 30 days</option>
           </select>
+        )}
+        {currentList.length > 0 && tab !== 'suspended' && (
+          <button
+            onClick={startBulkSend}
+            className="ml-auto flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-colors"
+          >
+            <Send size={14} /> Notify All ({currentList.length})
+          </button>
         )}
       </div>
 
@@ -133,17 +191,26 @@ export default function Notifications() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 flex-shrink-0">
+                <div className="flex items-center gap-2 flex-shrink-0">
                   {(tab === 'expiring' || tab === 'expired') && urgency === 'high' && (
                     <span className="hidden sm:flex items-center gap-1 text-xs text-red-600 font-semibold">
                       <AlertTriangle size={12} /> Urgent!
                     </span>
                   )}
+                  {tab !== 'suspended' && (
+                    <button
+                      onClick={() => openSMS(m)}
+                      className="flex items-center gap-1.5 text-xs bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-xl font-semibold transition-colors"
+                      title="Send SMS or WhatsApp"
+                    >
+                      <MessageSquare size={12} /> Notify
+                    </button>
+                  )}
                   <button
                     onClick={() => { setRenewModal(m); setRenewPlan(m.plan); }}
                     className="flex items-center gap-1.5 text-xs bg-orange-500 hover:bg-orange-600 text-white px-3 py-2 rounded-xl font-semibold transition-colors"
                   >
-                    <RefreshCw size={12} /> Renew Now
+                    <RefreshCw size={12} /> Renew
                   </button>
                 </div>
               </div>
