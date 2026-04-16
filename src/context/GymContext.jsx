@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { addMonths, addDays, subDays, format, differenceInDays, isAfter, isBefore, parseISO } from 'date-fns';
+import { syncMembers, removeSupabaseMember } from '../lib/supabase';
 
 const GymContext = createContext(null);
 
@@ -89,6 +90,9 @@ export function GymProvider({ children }) {
   useEffect(() => { saveToStorage('gymup_attendance', attendance); }, [attendance]);
   useEffect(() => { saveToStorage('gymup_smslog', smsLog); }, [smsLog]);
 
+  // On first load, push all members to Supabase so the cron job can see them
+  useEffect(() => { syncMembers(members); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const logSMS = (memberId, memberName, type, message) => {
     setSmsLog(prev => [{
       id: `SMS${Date.now()}`,
@@ -115,6 +119,7 @@ export function GymProvider({ children }) {
     const expiryDate = fmt(addMonths(parseISO(data.startDate), PLAN_MONTHS[data.plan]));
     const newMember = { ...data, id, memberNumber, status: 'active', expiryDate, registrationDate: fmt(today) };
     setMembers(prev => [...prev, newMember]);
+    syncMembers(newMember); // push to Supabase so cron can read it
 
     // Auto-record payment for new member
     const payId = `P${Date.now()}`;
@@ -128,11 +133,17 @@ export function GymProvider({ children }) {
   };
 
   const updateMember = (id, updates) => {
-    setMembers(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
+    setMembers(prev => {
+      const updated = prev.map(m => m.id === id ? { ...m, ...updates } : m);
+      const changed = updated.find(m => m.id === id);
+      if (changed) syncMembers(changed); // keep Supabase in sync
+      return updated;
+    });
   };
 
   const deleteMember = (id) => {
     setMembers(prev => prev.filter(m => m.id !== id));
+    removeSupabaseMember(id);
   };
 
   const renewMembership = (memberId, plan, paymentDate) => {
@@ -140,6 +151,7 @@ export function GymProvider({ children }) {
     if (!member) return;
     const newStart = fmt(today);
     const newExpiry = fmt(addMonths(today, PLAN_MONTHS[plan]));
+    // updateMember already syncs to Supabase — new expiry_date means cron reschedules correctly
     updateMember(memberId, { plan, startDate: newStart, expiryDate: newExpiry, status: 'active' });
 
     const payId = `P${Date.now()}`;
